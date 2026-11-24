@@ -73,6 +73,40 @@ function escapeHtml(s) {
   return d.innerHTML;
 }
 
+function renderCompanyInfo(data) {
+  const c = data.company || {};
+  const note = document.getElementById("searchNote");
+  if (data.search_note) {
+    note.textContent = data.search_note;
+    note.classList.remove("hidden");
+  } else {
+    note.textContent = "";
+    note.classList.add("hidden");
+  }
+
+  const items = [
+    ["Sector", c.sector],
+    ["Industry", c.industry],
+    ["Exchange", c.exchange],
+    ["Market cap", c.market_cap],
+    ["Employees", c.employees != null ? Number(c.employees).toLocaleString() : null],
+    ["52w high", data.signals?.fifty_two_week_high != null ? formatPrice(data.signals.fifty_two_week_high, data.currency) : null],
+    ["52w low", data.signals?.fifty_two_week_low != null ? formatPrice(data.signals.fifty_two_week_low, data.currency) : null],
+  ];
+  document.getElementById("companyMetrics").innerHTML = items
+    .map(([label, val]) => `<div class="metric"><span>${label}</span><strong>${val ?? "—"}</strong></div>`)
+    .join("");
+
+  const aboutEl = document.getElementById("companyAbout");
+  if (c.about) {
+    aboutEl.textContent = c.about;
+    aboutEl.classList.remove("hidden");
+  } else {
+    aboutEl.textContent = "";
+    aboutEl.classList.add("hidden");
+  }
+}
+
 function renderResult(data) {
   document.getElementById("result").classList.remove("hidden");
   document.getElementById("batch").classList.add("hidden");
@@ -95,7 +129,8 @@ function renderResult(data) {
   document.getElementById("resScore").textContent = data.score;
   setVerdictClass(document.getElementById("verdictCard"), data.score);
 
-  renderMetrics(data.signals);
+  renderCompanyInfo(data);
+  renderMetrics(data.signals || {});
   renderChart(data.signals.history);
 
   document.getElementById("reasons").innerHTML = (data.reasons || [])

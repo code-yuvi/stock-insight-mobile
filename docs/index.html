@@ -30,16 +30,16 @@
 
   <main class="layout">
     <section class="panel controls">
-      <label for="symbol">Stock symbol</label>
+      <label for="symbol">Stock name or symbol</label>
       <div class="row">
-        <input id="symbol" type="text" placeholder="e.g. RELIANCE, DEMO, AAPL" autocomplete="off" />
+        <input id="symbol" type="text" placeholder="e.g. Infosys, HDFC Bank, RELIANCE" autocomplete="off" />
         <select id="market" aria-label="Market">
           <option value="IN" selected>India (NSE)</option>
           <option value="US">US</option>
         </select>
         <button id="analyzeBtn" type="button">Analyze</button>
       </div>
-      <p class="hint">India names auto-append <code>.NS</code>. On office Wi‑Fi, try <code>DEMO</code> first or use mobile data.</p>
+      <p class="hint">Type a <strong>company name</strong> (Infosys, Tata Motors) or <strong>NSE code</strong> (INFY, TATAMOTORS). India picks NSE (<code>.NS</code>). Office Wi‑Fi blocked? Try <code>DEMO</code> or mobile data.</p>
 
       <h2 class="subhead">Nifty popular</h2>
       <div id="watchlist" class="chips"></div>
@@ -57,6 +57,14 @@
           <span id="resPrice" class="price">—</span>
           <span id="resChange" class="change"></span>
         </div>
+      </div>
+
+      <p id="searchNote" class="search-note hidden"></p>
+
+      <div id="companyInfo" class="company-info">
+        <h3>Company information</h3>
+        <div class="grid metrics" id="companyMetrics"></div>
+        <p id="companyAbout" class="company-about"></p>
       </div>
 
       <div class="verdict-row">

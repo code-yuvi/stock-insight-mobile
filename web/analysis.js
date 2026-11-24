@@ -26,6 +26,96 @@ export function normalizeSymbol(raw, market = "IN") {
   return `${s}.NS`;
 }
 
+function looksLikeTicker(q) {
+  const s = q.trim();
+  if (!s || /\s/.test(s)) return false;
+  return /^[A-Za-z0-9.\-^]{1,18}$/.test(s);
+}
+
+function matchPopularLabel(query) {
+  const ql = query.trim().toLowerCase();
+  let fuzzy = null;
+  for (const item of POPULAR_IN) {
+    const lab = item.label.toLowerCase();
+    const sym = item.symbol.toLowerCase();
+    if (sym === ql || lab === ql) return item.symbol;
+    if (lab.includes(ql) || ql.includes(lab)) fuzzy = item.symbol;
+  }
+  return fuzzy;
+}
+
+async function searchYahooSymbol(query, market) {
+  const url = `https://query2.finance.yahoo.com/v1/finance/search?q=${encodeURIComponent(
+    query
+  )}&quotesCount=12&newsCount=0&enableFuzzyQuery=true`;
+  const res = await fetch(url);
+  if (!res.ok) return null;
+  const quotes = (await res.json()).quotes || [];
+  const equities = quotes.filter(
+    (q) => !q.quoteType || q.quoteType === "EQUITY" || q.typeDisp === "Equity"
+  );
+  const first = (list) => (list.length ? list[0] : null);
+  const pick = (q) => ({ symbol: q.symbol, name: q.longname || q.shortname || q.symbol });
+
+  if (market.toUpperCase() === "IN") {
+    const nse = equities.filter((q) => q.symbol?.endsWith(".NS") || q.exchange === "NSI");
+    const hit = first(nse) || first(equities.filter((q) => q.symbol?.endsWith(".BO")));
+    return hit ? pick(hit) : null;
+  }
+  const us = equities.filter((q) => q.symbol && !q.symbol.includes("."));
+  const hit = first(us) || first(equities);
+  return hit ? pick(hit) : null;
+}
+
+/** Turn a company name or ticker into a Yahoo symbol. */
+export async function resolveToTicker(query, market = "IN") {
+  const raw = query.trim();
+  if (!raw) return null;
+  if (raw.toUpperCase() === "DEMO") return { symbol: "DEMO", name: "Demo Industries (synthetic)" };
+  const popular = matchPopularLabel(raw);
+  if (popular) return { symbol: normalizeSymbol(popular, market), name: null, matchedBy: "watchlist" };
+  if (looksLikeTicker(raw)) return { symbol: normalizeSymbol(raw, market), name: null, matchedBy: "ticker" };
+  const found = await searchYahooSymbol(raw, market);
+  if (!found) return null;
+  return { ...found, matchedBy: "search" };
+}
+
+function formatMarketCap(value, currency) {
+  if (value == null || Number.isNaN(value)) return null;
+  const abs = Math.abs(value);
+  let unit = "";
+  let n = value;
+  if (abs >= 1e12) {
+    n = value / 1e12;
+    unit = "T";
+  } else if (abs >= 1e9) {
+    n = value / 1e9;
+    unit = "B";
+  } else if (abs >= 1e6) {
+    n = value / 1e6;
+    unit = "M";
+  }
+  const prefix = currency === "INR" ? "₹" : currency === "USD" ? "$" : "";
+  return `${prefix}${n.toFixed(2)}${unit}`;
+}
+
+function buildCompanyBlock(info, priceMeta = {}) {
+  const profile = info.profile || {};
+  const aboutRaw = profile.longBusinessSummary || "";
+  const about =
+    aboutRaw.length > 420 ? `${aboutRaw.slice(0, 417).trim()}…` : aboutRaw.trim() || null;
+  return {
+    sector: profile.sector || info.sector || null,
+    industry: profile.industry || info.industry || null,
+    exchange: priceMeta.exchangeName || info.exchange || null,
+    market_cap: formatMarketCap(info.marketCap, info.currency),
+    market_cap_raw: info.marketCap ?? null,
+    website: profile.website || info.website || null,
+    employees: profile.fullTimeEmployees ?? info.fullTimeEmployees ?? null,
+    about,
+  };
+}
+
 function rollingMean(arr, window) {
   const out = [];
   for (let i = 0; i < arr.length; i++) {
@@ -360,7 +450,8 @@ async function fetchYahooChart(tickerSym) {
 }
 
 async function fetchYahooSummary(tickerSym) {
-  const modules = "summaryDetail,financialData,defaultKeyStatistics,price";
+  const modules =
+    "summaryDetail,financialData,defaultKeyStatistics,price,summaryProfile,assetProfile";
   const url = `https://query1.finance.yahoo.com/v10/finance/quoteSummary/${encodeURIComponent(
     tickerSym
   )}?modules=${modules}`;
@@ -372,16 +463,44 @@ async function fetchYahooSummary(tickerSym) {
   const sum = r.summaryDetail || {};
   const stat = r.defaultKeyStatistics || {};
   const price = r.price || {};
+  const profile = { ...(r.summaryProfile || {}), ...(r.assetProfile || {}) };
+  const currency = price.currency || profile.currency;
+  const marketCap = price.marketCap?.raw ?? sum.marketCap?.raw ?? stat.marketCap?.raw;
   return {
     shortName: price.shortName || price.longName,
-    longName: price.longName,
-    currency: price.currency,
+    longName: price.longName || price.shortName,
+    currency,
+    exchange: price.exchangeName || profile.exchange,
     trailingPE: sum.trailingPE?.raw ?? stat.trailingPE?.raw,
     forwardPE: sum.forwardPE?.raw,
     profitMargins: fin.profitMargins?.raw,
     debtToEquity: fin.debtToEquity?.raw,
     fiftyTwoWeekHigh: sum.fiftyTwoWeekHigh?.raw,
     fiftyTwoWeekLow: sum.fiftyTwoWeekLow?.raw,
+    marketCap,
+    profile,
+    sector: profile.sector,
+    industry: profile.industry,
+    website: profile.website,
+    fullTimeEmployees: profile.fullTimeEmployees,
+  };
+}
+
+function emptyResult(tickerSym, name, currency, action_hint) {
+  return {
+    symbol: tickerSym,
+    name: name || tickerSym,
+    currency,
+    current_price: null,
+    change_pct_1d: null,
+    signals: {},
+    score: 0,
+    verdict: "No data",
+    action_hint,
+    reasons: [],
+    warnings: [...BASE_WARNINGS],
+    company: {},
+    search_note: null,
   };
 }
 
@@ -408,26 +527,45 @@ export async function analyzeSymbol(symbol, market = "IN") {
       date: `d${i}`,
       close: Math.round(c * 100) / 100,
     }));
+    out.company = {
+      sector: "Technology (demo)",
+      industry: "Software",
+      exchange: "NSE (synthetic)",
+      market_cap: "—",
+      about: "Synthetic data for learning the screen layout. Use a real name like Infosys for live facts.",
+    };
+    out.search_note = null;
     return out;
   }
 
-  const tickerSym = normalizeSymbol(symbol, market);
+  const resolved = await resolveToTicker(symbol, market);
+  if (!resolved) {
+    return emptyResult(
+      symbol,
+      symbol,
+      market.toUpperCase() === "IN" ? "INR" : "USD",
+      `No listed stock found for “${symbol.trim()}”. Try full name (e.g. Tata Consultancy) or NSE code (TCS).`
+    );
+  }
+
+  const tickerSym = resolved.symbol === "DEMO" ? "DEMO.NS" : resolved.symbol;
+  const searchNote =
+    resolved.matchedBy === "search"
+      ? `Matched “${symbol.trim()}” → ${tickerSym}`
+      : null;
+
   let chart;
   try {
     chart = await fetchYahooChart(tickerSym);
   } catch (e) {
     return {
-      symbol: tickerSym,
-      name: tickerSym,
-      currency: market.toUpperCase() === "IN" ? "INR" : "USD",
-      current_price: null,
-      change_pct_1d: null,
-      signals: {},
-      score: 0,
-      verdict: "No data",
-      action_hint: `${e.message || "Fetch failed"} — try DEMO on slow networks.`,
-      reasons: [],
-      warnings: [...BASE_WARNINGS],
+      ...emptyResult(
+        tickerSym,
+        resolved.name || tickerSym,
+        market.toUpperCase() === "IN" ? "INR" : "USD",
+        `${e.message || "Fetch failed"} — try DEMO or mobile data.`
+      ),
+      search_note: searchNote,
     };
   }
 
@@ -444,17 +582,13 @@ export async function analyzeSymbol(symbol, market = "IN") {
 
   if (chart.close.length < 30) {
     return {
-      symbol: tickerSym,
-      name,
-      currency,
-      current_price: null,
-      change_pct_1d: null,
-      signals: {},
-      score: 0,
-      verdict: "No data",
-      action_hint: "Cannot analyze — check symbol (e.g. RELIANCE, AAPL) or try DEMO.",
-      reasons: [],
-      warnings: [...BASE_WARNINGS],
+      ...emptyResult(
+        tickerSym,
+        name,
+        currency,
+        "Not enough price history — try another name or symbol."
+      ),
+      search_note: searchNote,
     };
   }
 
@@ -464,5 +598,9 @@ export async function analyzeSymbol(symbol, market = "IN") {
     date: chart.dateLabels[start + i] || `d${i}`,
     close: Math.round(c * 100) / 100,
   }));
+  out.company = buildCompanyBlock(info, {
+    exchangeName: info.exchange || chart.meta?.exchangeName,
+  });
+  out.search_note = searchNote;
   return out;
 }
