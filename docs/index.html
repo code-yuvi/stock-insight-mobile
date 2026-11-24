@@ -31,13 +31,16 @@
   <main class="layout">
     <section class="panel controls">
       <label for="symbol">Stock name or symbol</label>
-      <div class="row">
-        <input id="symbol" type="text" placeholder="e.g. Infosys, HDFC Bank, RELIANCE" autocomplete="off" />
-        <select id="market" aria-label="Market">
-          <option value="IN" selected>India (NSE)</option>
-          <option value="US">US</option>
-        </select>
-        <button id="analyzeBtn" type="button">Analyze</button>
+      <div class="search-wrap">
+        <div class="row">
+          <input id="symbol" type="search" placeholder="Start typing — e.g. Info…" autocomplete="off" aria-autocomplete="list" aria-controls="suggestions" aria-expanded="false" />
+          <select id="market" aria-label="Market">
+            <option value="IN" selected>India (NSE)</option>
+            <option value="US">US</option>
+          </select>
+          <button id="analyzeBtn" type="button">Analyze</button>
+        </div>
+        <ul id="suggestions" class="suggestions hidden" role="listbox"></ul>
       </div>
       <p class="hint">Type a <strong>company name</strong> (Infosys, Tata Motors) or <strong>NSE code</strong> (INFY, TATAMOTORS). India picks NSE (<code>.NS</code>). Office Wi‑Fi blocked? Try <code>DEMO</code> or mobile data.</p>
 
@@ -56,6 +59,8 @@
         <div class="price-block">
           <span id="resPrice" class="price">—</span>
           <span id="resChange" class="change"></span>
+          <span id="resQuoteTime" class="quote-time muted"></span>
+          <button id="refreshBtn" type="button" class="refresh-btn secondary">Refresh price</button>
         </div>
       </div>
 

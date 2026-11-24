@@ -15,6 +15,14 @@ cd "c:\MyProject\MyWork\stock-insight"
 
 The script prints a link like **`https://YOUR_USER.github.io/stock-insight-mobile/`**. Open it on your phone in Chrome or Safari, then **Add to Home screen** for an app-like icon.
 
+### How search works
+
+1. Open the link → type a **company name** (e.g. `Infosys`, `HDFC Bank`, `Tata Motors`) or **ticker** (`INFY`, `RELIANCE`).
+2. Tap **Analyze**.
+3. The app finds the listed symbol (India → NSE), then shows **company information** (sector, industry, market cap, about), **price**, **chart**, and **educational buy/sell-style rules** (not advice).
+
+Live data needs internet (Yahoo Finance). Use **`DEMO`** offline to see the layout.
+
 | Tip | |
 |-----|---|
 | Office Wi‑Fi blocks Yahoo | Try **mobile data** or symbol **`DEMO`** |

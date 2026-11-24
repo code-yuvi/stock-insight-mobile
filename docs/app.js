@@ -1,6 +1,11 @@
-import { POPULAR_IN, analyzeSymbol } from "./analysis.js";
+import { POPULAR_IN, analyzeSymbol, suggestStocks } from "./analysis.js";
 
 let chartInstance = null;
+let lastAnalysis = null;
+let suggestTimer = null;
+let suggestionItems = [];
+let suggestActive = -1;
+let refreshTimer = null;
 
 function formatPrice(value, currency) {
   if (value == null) return "—";
@@ -115,6 +120,19 @@ function renderResult(data) {
   document.getElementById("resSymbol").textContent = data.symbol;
   document.getElementById("resPrice").textContent = formatPrice(data.current_price, data.currency);
 
+  const qt = document.getElementById("resQuoteTime");
+  const q = data.quote;
+  if (q?.updated_at) {
+    qt.textContent = `Live quote · ${q.market_state} · ${q.updated_at}`;
+    qt.classList.remove("hidden");
+  } else if (data.symbol?.includes("DEMO")) {
+    qt.textContent = "Demo data (not live)";
+    qt.classList.remove("hidden");
+  } else {
+    qt.textContent = "";
+    qt.classList.add("hidden");
+  }
+
   const ch = document.getElementById("resChange");
   const pct = data.change_pct_1d;
   if (pct != null) {
@@ -141,20 +159,144 @@ function renderResult(data) {
     .join("");
 }
 
-async function analyze(symbol) {
+function hideSuggestions() {
+  const list = document.getElementById("suggestions");
+  list.classList.add("hidden");
+  list.innerHTML = "";
+  suggestionItems = [];
+  suggestActive = -1;
+  document.getElementById("symbol").setAttribute("aria-expanded", "false");
+}
+
+function renderSuggestions(items) {
+  const list = document.getElementById("suggestions");
+  const input = document.getElementById("symbol");
+  suggestionItems = items;
+  if (!items.length) {
+    hideSuggestions();
+    return;
+  }
+  list.innerHTML = items
+    .map(
+      (item, i) =>
+        `<li role="option" data-idx="${i}" class="suggestion-item${i === suggestActive ? " active" : ""}">
+          <strong>${escapeHtml(item.name)}</strong>
+          <span>${escapeHtml(item.symbol)} · ${escapeHtml(item.exchange || "")}</span>
+        </li>`
+    )
+    .join("");
+  list.classList.remove("hidden");
+  input.setAttribute("aria-expanded", "true");
+  list.querySelectorAll(".suggestion-item").forEach((el) => {
+    el.addEventListener("mousedown", (e) => {
+      e.preventDefault();
+      pickSuggestion(Number(el.dataset.idx));
+    });
+  });
+}
+
+function pickSuggestion(idx) {
+  const item = suggestionItems[idx];
+  if (!item) return;
+  hideSuggestions();
+  document.getElementById("symbol").value = item.name;
+  runAnalyze(item.name, { tickerSym: item.symbol, name: item.name });
+}
+
+async function runAnalyze(symbol, opts = {}) {
   const market = document.getElementById("market").value;
   const btn = document.getElementById("analyzeBtn");
   btn.disabled = true;
   btn.textContent = "Loading…";
+  hideSuggestions();
   try {
-    const data = await analyzeSymbol(symbol, market);
+    const data = await analyzeSymbol(symbol, market, opts);
     renderResult(data);
+    lastAnalysis = {
+      query: symbol,
+      market,
+      tickerSym: data.ticker_sym || opts.tickerSym || null,
+      name: data.name || opts.name || null,
+    };
   } catch (e) {
     alert(e.message || "Analysis failed");
   } finally {
     btn.disabled = false;
     btn.textContent = "Analyze";
   }
+}
+
+async function analyze(symbol, opts = {}) {
+  await runAnalyze(symbol, opts);
+  if (refreshTimer) clearInterval(refreshTimer);
+  refreshTimer = setInterval(() => {
+    if (lastAnalysis) refreshLive();
+  }, 90000);
+}
+
+async function refreshLive() {
+  if (!lastAnalysis) return;
+  const btn = document.getElementById("refreshBtn");
+  btn.disabled = true;
+  btn.textContent = "Refreshing…";
+  try {
+    const { query, market, tickerSym, name } = lastAnalysis;
+    const data = await analyzeSymbol(query, market, tickerSym ? { tickerSym, name } : {});
+    renderResult(data);
+    lastAnalysis.tickerSym = data.ticker_sym || tickerSym;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "Refresh price";
+  }
+}
+
+function setupAutocomplete() {
+  const input = document.getElementById("symbol");
+  const list = document.getElementById("suggestions");
+
+  input.addEventListener("input", () => {
+    clearTimeout(suggestTimer);
+    const q = input.value;
+    if (!q.trim()) {
+      hideSuggestions();
+      return;
+    }
+    suggestTimer = setTimeout(async () => {
+      const market = document.getElementById("market").value;
+      const items = await suggestStocks(q, market);
+      suggestActive = -1;
+      renderSuggestions(items);
+    }, 200);
+  });
+
+  input.addEventListener("keydown", (e) => {
+    if (list.classList.contains("hidden")) return;
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      suggestActive = Math.min(suggestActive + 1, suggestionItems.length - 1);
+      renderSuggestions(suggestionItems);
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      suggestActive = Math.max(suggestActive - 1, 0);
+      renderSuggestions(suggestionItems);
+    } else if (e.key === "Enter" && suggestActive >= 0) {
+      e.preventDefault();
+      pickSuggestion(suggestActive);
+    } else if (e.key === "Escape") {
+      hideSuggestions();
+    }
+  });
+
+  document.addEventListener("click", (e) => {
+    if (!e.target.closest(".search-wrap")) hideSuggestions();
+  });
+
+  document.getElementById("market").addEventListener("change", () => {
+    const q = input.value.trim();
+    if (q.length >= 1) {
+      suggestStocks(q, document.getElementById("market").value).then(renderSuggestions);
+    }
+  });
 }
 
 function loadWatchlist() {
@@ -223,12 +365,14 @@ document.getElementById("analyzeBtn").addEventListener("click", () => {
 });
 
 document.getElementById("symbol").addEventListener("keydown", (e) => {
-  if (e.key === "Enter") {
+  if (e.key === "Enter" && suggestActive < 0) {
     const sym = e.target.value.trim();
     if (sym) analyze(sym);
   }
 });
 
+document.getElementById("refreshBtn").addEventListener("click", () => refreshLive());
 document.getElementById("scanBtn").addEventListener("click", scanWatchlist);
 
+setupAutocomplete();
 loadWatchlist();

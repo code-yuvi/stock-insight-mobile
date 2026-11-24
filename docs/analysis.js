@@ -44,27 +44,95 @@ function matchPopularLabel(query) {
   return fuzzy;
 }
 
+function filterEquityQuotes(quotes) {
+  return (quotes || []).filter(
+    (q) => !q.quoteType || q.quoteType === "EQUITY" || q.typeDisp === "Equity"
+  );
+}
+
+function quotesForMarket(equities, market) {
+  if (market.toUpperCase() === "IN") {
+    const nse = equities.filter((q) => q.symbol?.endsWith(".NS") || q.exchange === "NSI");
+    const bse = equities.filter((q) => q.symbol?.endsWith(".BO"));
+    return [...nse, ...bse];
+  }
+  const us = equities.filter((q) => q.symbol && !q.symbol.includes("."));
+  return us.length ? us : equities;
+}
+
+function mapQuoteRow(q, market) {
+  return {
+    symbol: q.symbol,
+    name: q.longname || q.shortname || q.symbol,
+    exchange: q.exchange || (q.symbol?.endsWith(".NS") ? "NSE" : q.symbol?.endsWith(".BO") ? "BSE" : market),
+  };
+}
+
+/** Type-ahead suggestions while typing (names + symbols). */
+export async function suggestStocks(query, market = "IN") {
+  const q = query.trim();
+  if (!q) return [];
+
+  const ql = q.toLowerCase();
+  const local = POPULAR_IN.filter(
+    (item) =>
+      item.label.toLowerCase().includes(ql) ||
+      item.symbol.toLowerCase().startsWith(ql) ||
+      ql.startsWith(item.symbol.toLowerCase().slice(0, 3))
+  ).map((item) => ({
+    ...mapQuoteRow(
+      { symbol: normalizeSymbol(item.symbol, market), longname: item.label, exchange: "NSE" },
+      market
+    ),
+    source: "popular",
+  }));
+
+  if (q.length < 2) return local.slice(0, 8);
+
+  const url = `https://query2.finance.yahoo.com/v1/finance/search?q=${encodeURIComponent(
+    q
+  )}&quotesCount=14&newsCount=0&enableFuzzyQuery=true`;
+  try {
+    const res = await fetch(url, { cache: "no-store" });
+    if (!res.ok) return local.slice(0, 10);
+    const equities = quotesForMarket(filterEquityQuotes((await res.json()).quotes), market);
+    const remote = equities.slice(0, 10).map((row) => ({ ...mapQuoteRow(row, market), source: "live" }));
+
+    const seen = new Set();
+    const merged = [];
+    for (const item of [...local, ...remote]) {
+      if (!item.symbol || seen.has(item.symbol)) continue;
+      seen.add(item.symbol);
+      merged.push(item);
+    }
+    return merged.slice(0, 10);
+  } catch {
+    return local.slice(0, 10);
+  }
+}
+
 async function searchYahooSymbol(query, market) {
   const url = `https://query2.finance.yahoo.com/v1/finance/search?q=${encodeURIComponent(
     query
   )}&quotesCount=12&newsCount=0&enableFuzzyQuery=true`;
-  const res = await fetch(url);
+  const res = await fetch(url, { cache: "no-store" });
   if (!res.ok) return null;
-  const quotes = (await res.json()).quotes || [];
-  const equities = quotes.filter(
-    (q) => !q.quoteType || q.quoteType === "EQUITY" || q.typeDisp === "Equity"
-  );
-  const first = (list) => (list.length ? list[0] : null);
-  const pick = (q) => ({ symbol: q.symbol, name: q.longname || q.shortname || q.symbol });
+  const equities = quotesForMarket(filterEquityQuotes((await res.json()).quotes), market);
+  const hit = equities[0];
+  return hit ? mapQuoteRow(hit, market) : null;
+}
 
-  if (market.toUpperCase() === "IN") {
-    const nse = equities.filter((q) => q.symbol?.endsWith(".NS") || q.exchange === "NSI");
-    const hit = first(nse) || first(equities.filter((q) => q.symbol?.endsWith(".BO")));
-    return hit ? pick(hit) : null;
+export function formatQuoteTime(unixSec, timeZone = "Asia/Kolkata") {
+  if (!unixSec) return null;
+  try {
+    return new Intl.DateTimeFormat("en-IN", {
+      dateStyle: "medium",
+      timeStyle: "short",
+      timeZone,
+    }).format(new Date(unixSec * 1000));
+  } catch {
+    return new Date(unixSec * 1000).toLocaleString();
   }
-  const us = equities.filter((q) => q.symbol && !q.symbol.includes("."));
-  const hit = first(us) || first(equities);
-  return hit ? pick(hit) : null;
 }
 
 /** Turn a company name or ticker into a Yahoo symbol. */
@@ -422,11 +490,56 @@ function analyzeFromHist(tickerSym, name, currency, close, volume, info, extraWa
   };
 }
 
+function applyLivePrices(close, volume, dateLabels, meta) {
+  const live = meta.regularMarketPrice ?? meta.previousClose;
+  if (live == null || !close.length) return { close, volume, dateLabels };
+
+  const c = close.slice();
+  const v = volume.slice();
+  const d = dateLabels.slice();
+  const marketDay = meta.regularMarketTime
+    ? new Date(meta.regularMarketTime * 1000).toISOString().slice(0, 10)
+    : null;
+  const lastBar = d[d.length - 1];
+
+  if (marketDay && lastBar === marketDay) {
+    c[c.length - 1] = live;
+  } else if (marketDay && lastBar && lastBar < marketDay) {
+    c.push(live);
+    v.push(meta.regularMarketVolume ?? v[v.length - 1] ?? 0);
+    d.push(marketDay);
+  } else {
+    c[c.length - 1] = live;
+  }
+  return { close: c, volume: v, dateLabels: d };
+}
+
+function overlayLiveOnResult(out, meta, currency) {
+  const live = meta.regularMarketPrice;
+  const prev = meta.chartPreviousClose ?? meta.previousClose;
+  if (live == null) return out;
+
+  out.current_price = Math.round(live * 100) / 100;
+  if (prev) out.change_pct_1d = Math.round(((live - prev) / prev) * 10000) / 100;
+  if (out.signals) out.signals.price = out.current_price;
+
+  const state = meta.marketState || meta.currentTradingPeriod || "—";
+  const when = formatQuoteTime(meta.regularMarketTime, meta.exchangeTimezoneName || "Asia/Kolkata");
+  out.quote = {
+    market_state: typeof state === "string" ? state : "LIVE",
+    updated_at: when,
+    delayed: !!meta.dataGranularity && meta.dataGranularity !== "1m",
+    source: "Yahoo Finance (live quote)",
+  };
+  return out;
+}
+
 async function fetchYahooChart(tickerSym) {
+  const bust = Date.now();
   const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(
     tickerSym
-  )}?interval=1d&range=1y&includePrePost=false`;
-  const res = await fetch(url);
+  )}?interval=1d&range=1y&includePrePost=true&events=div%7Csplits&_=${bust}`;
+  const res = await fetch(url, { cache: "no-store" });
   if (!res.ok) throw new Error("Could not reach Yahoo Finance — try DEMO or mobile data.");
   const body = await res.json();
   const result = body?.chart?.result?.[0];
@@ -455,7 +568,7 @@ async function fetchYahooSummary(tickerSym) {
   const url = `https://query1.finance.yahoo.com/v10/finance/quoteSummary/${encodeURIComponent(
     tickerSym
   )}?modules=${modules}`;
-  const res = await fetch(url);
+  const res = await fetch(url, { cache: "no-store" });
   if (!res.ok) return {};
   const body = await res.json();
   const r = body?.quoteSummary?.result?.[0] || {};
@@ -504,7 +617,7 @@ function emptyResult(tickerSym, name, currency, action_hint) {
   };
 }
 
-export async function analyzeSymbol(symbol, market = "IN") {
+export async function analyzeSymbol(symbol, market = "IN", opts = {}) {
   if (symbol.trim().toUpperCase() === "DEMO") {
     const { close, volume } = demoHistory();
     const max = Math.max(...close);
@@ -538,21 +651,30 @@ export async function analyzeSymbol(symbol, market = "IN") {
     return out;
   }
 
-  const resolved = await resolveToTicker(symbol, market);
-  if (!resolved) {
-    return emptyResult(
-      symbol,
-      symbol,
-      market.toUpperCase() === "IN" ? "INR" : "USD",
-      `No listed stock found for “${symbol.trim()}”. Try full name (e.g. Tata Consultancy) or NSE code (TCS).`
-    );
+  let resolved;
+  let tickerSym;
+  if (opts.tickerSym) {
+    tickerSym = opts.tickerSym;
+    resolved = { name: opts.name || null, matchedBy: "picker" };
+  } else {
+    resolved = await resolveToTicker(symbol, market);
+    if (!resolved) {
+      return emptyResult(
+        symbol,
+        symbol,
+        market.toUpperCase() === "IN" ? "INR" : "USD",
+        `No listed stock found for “${symbol.trim()}”. Try full name (e.g. Tata Consultancy) or NSE code (TCS).`
+      );
+    }
+    tickerSym = resolved.symbol === "DEMO" ? "DEMO.NS" : resolved.symbol;
   }
 
-  const tickerSym = resolved.symbol === "DEMO" ? "DEMO.NS" : resolved.symbol;
   const searchNote =
     resolved.matchedBy === "search"
       ? `Matched “${symbol.trim()}” → ${tickerSym}`
-      : null;
+      : resolved.matchedBy === "picker" && resolved.name
+        ? `${resolved.name} (${tickerSym})`
+        : null;
 
   let chart;
   try {
@@ -580,7 +702,8 @@ export async function analyzeSymbol(symbol, market = "IN") {
   const currency =
     info.currency || chart.meta.currency || (market.toUpperCase() === "IN" ? "INR" : "USD");
 
-  if (chart.close.length < 30) {
+  const merged = applyLivePrices(chart.close, chart.volume, chart.dateLabels, chart.meta);
+  if (merged.close.length < 30) {
     return {
       ...emptyResult(
         tickerSym,
@@ -592,15 +715,17 @@ export async function analyzeSymbol(symbol, market = "IN") {
     };
   }
 
-  const out = analyzeFromHist(tickerSym, name, currency, chart.close, chart.volume, info, []);
-  const start = Math.max(0, chart.close.length - 120);
-  out.signals.history = chart.close.slice(start).map((c, i) => ({
-    date: chart.dateLabels[start + i] || `d${i}`,
+  const out = analyzeFromHist(tickerSym, name, currency, merged.close, merged.volume, info, []);
+  const start = Math.max(0, merged.close.length - 120);
+  out.signals.history = merged.close.slice(start).map((c, i) => ({
+    date: merged.dateLabels[start + i] || `d${i}`,
     close: Math.round(c * 100) / 100,
   }));
+  overlayLiveOnResult(out, chart.meta, currency);
   out.company = buildCompanyBlock(info, {
     exchangeName: info.exchange || chart.meta?.exchangeName,
   });
   out.search_note = searchNote;
+  out.ticker_sym = tickerSym;
   return out;
 }
