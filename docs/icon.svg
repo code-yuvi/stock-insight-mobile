@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" fill="none">
+  <rect width="128" height="128" rx="24" fill="#0b0f14"/>
+  <path d="M24 88 L44 58 L64 72 L88 36 L104 52" stroke="#3ddea5" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/>
+  <text x="64" y="108" text-anchor="middle" font-family="system-ui,sans-serif" font-size="14" fill="#8fa3b8">INSIGHT</text>
+</svg>

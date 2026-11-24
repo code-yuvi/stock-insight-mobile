@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-title" content="Stock Insight" />
+  <meta name="theme-color" content="#0b0f14" />
+  <title>Stock Insight — Educational Analyzer</title>
+  <link rel="manifest" href="manifest.webmanifest" />
+  <link rel="icon" href="icon.svg" type="image/svg+xml" />
+  <link rel="apple-touch-icon" href="icon.svg" />
+  <link rel="stylesheet" href="styles.css" />
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+</head>
+<body>
+  <header class="header">
+    <div class="brand">
+      <span class="logo">◈</span>
+      <div>
+        <h1>Stock Insight</h1>
+        <p class="tagline">Runs on your phone — no PC required</p>
+      </div>
+    </div>
+    <aside class="disclaimer-bar">
+      Not SEBI-registered advice. Rules + public data only. You decide trades.
+    </aside>
+  </header>
+
+  <main class="layout">
+    <section class="panel controls">
+      <label for="symbol">Stock symbol</label>
+      <div class="row">
+        <input id="symbol" type="text" placeholder="e.g. RELIANCE, DEMO, AAPL" autocomplete="off" />
+        <select id="market" aria-label="Market">
+          <option value="IN" selected>India (NSE)</option>
+          <option value="US">US</option>
+        </select>
+        <button id="analyzeBtn" type="button">Analyze</button>
+      </div>
+      <p class="hint">India names auto-append <code>.NS</code>. On office Wi‑Fi, try <code>DEMO</code> first or use mobile data.</p>
+
+      <h2 class="subhead">Nifty popular</h2>
+      <div id="watchlist" class="chips"></div>
+
+      <button id="scanBtn" type="button" class="secondary">Scan watchlist</button>
+    </section>
+
+    <section id="result" class="panel result hidden">
+      <div class="result-head">
+        <div>
+          <h2 id="resName">—</h2>
+          <p id="resSymbol" class="muted"></p>
+        </div>
+        <div class="price-block">
+          <span id="resPrice" class="price">—</span>
+          <span id="resChange" class="change"></span>
+        </div>
+      </div>
+
+      <div class="verdict-row">
+        <div class="verdict-card" id="verdictCard">
+          <span class="verdict-label">Rule-based view</span>
+          <span id="resVerdict" class="verdict">—</span>
+          <p id="resAction" class="action-hint"></p>
+          <p class="score">Score: <strong id="resScore">0</strong> <span class="muted">(−4 bearish … +4 bullish)</span></p>
+        </div>
+      </div>
+
+      <div class="grid metrics" id="metrics"></div>
+
+      <div class="chart-wrap">
+        <canvas id="priceChart" aria-label="Price chart"></canvas>
+      </div>
+
+      <h3>Why the tool said this</h3>
+      <ul id="reasons" class="reasons"></ul>
+
+      <h3>Always remember</h3>
+      <ul id="warnings" class="warnings"></ul>
+    </section>
+
+    <section id="batch" class="panel hidden">
+      <h2>Watchlist scan</h2>
+      <div id="batchTable" class="batch-table"></div>
+    </section>
+
+    <section class="panel learn">
+      <h2>Install like an app</h2>
+      <p class="hint">Chrome: menu → <strong>Add to Home screen</strong>. iPhone Safari: Share → <strong>Add to Home Screen</strong>.</p>
+    </section>
+  </main>
+
+  <footer class="footer">
+    <p>Data fetched from Yahoo Finance in your browser. Delays and errors possible.</p>
+  </footer>
+  <script type="module" src="app.js"></script>
+</body>
+</html>
